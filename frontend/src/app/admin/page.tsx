@@ -1,0 +1,444 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/components/AuthProvider';
+import { api } from '@/lib/api';
+import { ShieldCheck, Users, FileText, Activity, Check, X, Ban, ShieldAlert, Key, Clock } from 'lucide-react';
+
+interface QueueItem {
+  id: string;
+  word: string;
+  meaning: string;
+  emotionalMeaning: string;
+  exampleSentence: string;
+  originRegion: string;
+  severity: string;
+  aiToxicityScore: number;
+  createdAt: string;
+  uploader?: {
+    username: string;
+    role: string;
+  };
+}
+
+interface AuditLog {
+  id: string;
+  actionType: string;
+  targetUser: string | null;
+  targetPost: string | null;
+  reason: string;
+  createdAt: string;
+  admin: {
+    username: string;
+    role: string;
+  };
+}
+
+interface SystemStats {
+  totalUsers: number;
+  totalSlangs: number;
+  pendingReviews: number;
+  popularSlangs: { word: string; views: number }[];
+}
+
+export default function AdminDashboardPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const [activeTab, setActiveTab] = useState<'queue' | 'users' | 'logs'>('queue');
+  
+  // Data states
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [stats, setStats] = useState<SystemStats | null>(null);
+  
+  // User ban form states
+  const [targetUsername, setTargetUsername] = useState('');
+  const [banType, setBanType] = useState<'PERMANENT_BAN' | 'SHADOW_BAN' | 'TEMPORARY_SUSPEND' | 'UNBAN'>('TEMPORARY_SUSPEND');
+  const [banReason, setBanReason] = useState('');
+  const [suspendDays, setSuspendDays] = useState(3);
+
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Redirect if unauthorized
+  useEffect(() => {
+    if (!user || !['MODERATOR', 'ADMIN', 'SUPERADMIN'].includes(user.role)) {
+      router.push('/');
+    } else {
+      fetchAdminData();
+    }
+  }, [user, router]);
+
+  const fetchAdminData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const statsRes = await api.getStats();
+      setStats(statsRes.stats);
+
+      const queueRes = await api.getQueue();
+      setQueue(queueRes.queue);
+
+      if (user && ['ADMIN', 'SUPERADMIN'].includes(user.role)) {
+        const logsRes = await api.getAuditLogs();
+        setLogs(logsRes.logs);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load administrator dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReview = async (gaaliId: string, action: 'APPROVE' | 'REJECT' | 'HIDE') => {
+    setActionLoading(gaaliId);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await api.reviewUpload({ gaaliId, action, reason: `Manual moderator action: ${action}` });
+      setSuccess(res.message);
+      // Remove from local queue
+      setQueue(queue.filter(item => item.id !== gaaliId));
+      
+      // Refresh statistics
+      const statsRes = await api.getStats();
+      setStats(statsRes.stats);
+      
+      if (user && ['ADMIN', 'SUPERADMIN'].includes(user.role)) {
+        const logsRes = await api.getAuditLogs();
+        setLogs(logsRes.logs);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Moderation action failed.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUserBan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!targetUsername.trim()) return;
+
+    try {
+      // First we need to find user ID by profile query
+      const profileRes = await api.getUserProfile(targetUsername);
+      const targetUserId = profileRes.profile.id;
+
+      const res = await api.banUser({
+        targetUserId,
+        banType,
+        reason: banReason || `Admin action: ${banType}`,
+        durationDays: suspendDays
+      });
+
+      setSuccess(res.message);
+      setTargetUsername('');
+      setBanReason('');
+      
+      // Sync logs
+      if (user && ['ADMIN', 'SUPERADMIN'].includes(user.role)) {
+        const logsRes = await api.getAuditLogs();
+        setLogs(logsRes.logs);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to penalize user. Verify username is correct.');
+    }
+  };
+
+  if (!user || !['MODERATOR', 'ADMIN', 'SUPERADMIN'].includes(user.role)) {
+    return <div className="text-center py-16 text-slate-400">Access Denied. Redirecting...</div>;
+  }
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-3xl font-extrabold text-white flex items-center gap-2">
+          <ShieldCheck className="h-8 w-8 text-[#ff4d4d]" /> Administration Portal
+        </h1>
+        <p className="text-slate-400 mt-2 text-sm">
+          Welcome back, {user.username} ({user.role}). Monitor reports, review user submissions, and secure quality standards.
+        </p>
+      </div>
+
+      {/* Stats Summary Panel */}
+      {stats && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[#1e293b] border border-[#334155] p-6 rounded-2xl flex items-center gap-4">
+            <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400">
+              <Users className="h-6 w-6" />
+            </div>
+            <div>
+              <span className="text-xs text-slate-400 block font-semibold">Total Accounts</span>
+              <span className="text-2xl font-black text-white">{stats.totalUsers}</span>
+            </div>
+          </div>
+
+          <div className="bg-[#1e293b] border border-[#334155] p-6 rounded-2xl flex items-center gap-4">
+            <div className="p-3 bg-[#ff4d4d]/10 rounded-xl text-[#ff4d4d]">
+              <FileText className="h-6 w-6" />
+            </div>
+            <div>
+              <span className="text-xs text-slate-400 block font-semibold">Approved Slangs</span>
+              <span className="text-2xl font-black text-white">{stats.totalSlangs}</span>
+            </div>
+          </div>
+
+          <div className="bg-[#1e293b] border border-[#334155] p-6 rounded-2xl flex items-center gap-4">
+            <div className="p-3 bg-amber-500/10 rounded-xl text-amber-500">
+              <Clock className="h-6 w-6" />
+            </div>
+            <div>
+              <span className="text-xs text-slate-400 block font-semibold">Moderation Queue</span>
+              <span className="text-2xl font-black text-white">{stats.pendingReviews}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="border-b border-[#334155] flex gap-6 text-sm font-semibold">
+        <button
+          onClick={() => setActiveTab('queue')}
+          className={`pb-3 border-b-2 transition-all cursor-pointer ${
+            activeTab === 'queue' ? 'border-[#ff4d4d] text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          Review Queue ({queue.length})
+        </button>
+        {['ADMIN', 'SUPERADMIN'].includes(user.role) && (
+          <>
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`pb-3 border-b-2 transition-all cursor-pointer ${
+                activeTab === 'users' ? 'border-[#ff4d4d] text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Account Controls
+            </button>
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`pb-3 border-b-2 transition-all cursor-pointer ${
+                activeTab === 'logs' ? 'border-[#ff4d4d] text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              System Audit Logs ({logs.length})
+            </button>
+          </>
+        )}
+      </div>
+
+      {success && (
+        <div className="bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/25 p-3 rounded-lg text-sm">
+          {success}
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-500/15 text-red-500 border border-red-500/25 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Tab Panels */}
+      {loading ? (
+        <div className="text-center py-8 text-slate-400 animate-pulse">Syncing catalog logs...</div>
+      ) : (
+        <div>
+          {/* 1. REVIEW QUEUE TAB */}
+          {activeTab === 'queue' && (
+            <div className="space-y-4">
+              {queue.map((item) => (
+                <div key={item.id} className="p-6 rounded-2xl bg-[#1e293b] border border-[#334155] space-y-4 shadow-md">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-bold text-white mb-1">{item.word}</h3>
+                      <div className="flex flex-wrap gap-2 items-center text-xs text-slate-400">
+                        <span className="px-2 py-0.5 bg-slate-800 rounded">{item.originRegion}</span>
+                        <span>Uploader: <strong className="text-slate-300">{item.uploader?.username || 'Anonymous'}</strong></span>
+                        <span>Toxicity: 
+                          <strong className={`ml-1 px-1.5 py-0.5 rounded text-[10px] ${
+                            item.aiToxicityScore >= 60 ? 'bg-red-500/20 text-red-500' : item.aiToxicityScore >= 30 ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500'
+                          }`}>
+                            {item.aiToxicityScore} pts
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Moderation Controls */}
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => handleReview(item.id, 'APPROVE')}
+                        disabled={actionLoading === item.id}
+                        className="flex items-center gap-1 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-all cursor-pointer"
+                      >
+                        <Check className="h-4 w-4" /> Approve
+                      </button>
+                      <button
+                        onClick={() => handleReview(item.id, 'REJECT')}
+                        disabled={actionLoading === item.id}
+                        className="flex items-center gap-1 py-1.5 px-3 rounded-lg bg-red-650 hover:bg-red-500 text-xs font-semibold text-white transition-all cursor-pointer"
+                      >
+                        <X className="h-4 w-4" /> Reject
+                      </button>
+                      <button
+                        onClick={() => handleReview(item.id, 'HIDE')}
+                        disabled={actionLoading === item.id}
+                        className="flex items-center gap-1 py-1.5 px-3 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-200 hover:text-white transition-all cursor-pointer"
+                      >
+                        <Ban className="h-4 w-4" /> Hide
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm bg-[#0f172a]/55 border border-[#334155]/50 p-4 rounded-xl">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Real Meaning</span>
+                      <p className="text-slate-350">{item.meaning}</p>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Emotional Usage</span>
+                      <p className="text-slate-350">{item.emotionalMeaning}</p>
+                    </div>
+                    <div className="md:col-span-2 mt-2">
+                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Usage Example</span>
+                      <p className="text-slate-350 italic">&ldquo;{item.exampleSentence}&rdquo;</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {queue.length === 0 && (
+                <div className="text-center py-12 border border-dashed border-[#334155] rounded-2xl text-slate-500">
+                  Moderation queue is clean. Good work!
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. ACCOUNT CONTROLS TAB */}
+          {activeTab === 'users' && ['ADMIN', 'SUPERADMIN'].includes(user.role) && (
+            <div className="bg-[#1e293b] border border-[#334155] p-8 rounded-2xl space-y-6">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2 border-b border-[#334155] pb-3">
+                <ShieldAlert className="h-5 w-5 text-[#ff4d4d]" /> Warn / Suspend / Ban User accounts
+              </h3>
+
+              <form onSubmit={handleUserBan} className="space-y-4 max-w-xl">
+                <div>
+                  <label className="block text-sm font-bold text-slate-300 mb-1.5">
+                    Target Username
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={targetUsername}
+                    onChange={(e) => setTargetUsername(e.target.value)}
+                    placeholder="e.g. spammer_123"
+                    className="w-full px-4 py-2.5 rounded-lg bg-[#0f172a] border border-[#334155] text-white placeholder-slate-500 focus:outline-none focus:border-[#ff4d4d]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-300 mb-1.5">
+                      Security Action
+                    </label>
+                    <select
+                      value={banType}
+                      onChange={(e) => setBanType(e.target.value as any)}
+                      className="w-full px-4 py-2.5 rounded-lg bg-[#0f172a] border border-[#334155] text-white focus:outline-none"
+                    >
+                      <option value="TEMPORARY_SUSPEND">Temporary Suspend</option>
+                      <option value="SHADOW_BAN">Silent Shadow Ban</option>
+                      <option value="PERMANENT_BAN">Permanent Account Ban</option>
+                      <option value="UNBAN">Revoke Bans (Unban)</option>
+                    </select>
+                  </div>
+
+                  {banType === 'TEMPORARY_SUSPEND' && (
+                    <div>
+                      <label className="block text-sm font-bold text-slate-300 mb-1.5">
+                        Duration (Days)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={suspendDays}
+                        onChange={(e) => setSuspendDays(Number(e.target.value))}
+                        className="w-full px-4 py-2.5 rounded-lg bg-[#0f172a] border border-[#334155] text-white focus:outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-300 mb-1.5">
+                    Reason for action
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={banReason}
+                    onChange={(e) => setBanReason(e.target.value)}
+                    placeholder="Spam uploads / communal slurs / abusive comments"
+                    className="w-full px-4 py-2.5 rounded-lg bg-[#0f172a] border border-[#334155] text-white placeholder-slate-500 focus:outline-none focus:border-[#ff4d4d] resize-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 rounded-lg bg-[#ff4d4d] hover:bg-[#e04343] text-sm font-bold text-white transition-all shadow-md cursor-pointer"
+                >
+                  Apply Account Action
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* 3. AUDIT LOGS TAB */}
+          {activeTab === 'logs' && ['ADMIN', 'SUPERADMIN'].includes(user.role) && (
+            <div className="bg-[#1e293b] border border-[#334155] rounded-2xl overflow-hidden shadow-md">
+              <div className="p-4 bg-slate-800 border-b border-[#334155] flex items-center gap-2">
+                <Activity className="h-5 w-5 text-amber-500" />
+                <span className="text-sm font-bold text-white">System Security Log Ledger</span>
+              </div>
+              <div className="divide-y divide-[#334155] max-h-[500px] overflow-y-auto">
+                {logs.map((log) => (
+                  <div key={log.id} className="p-4 text-xs space-y-1">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>
+                        Admin: <strong className="text-slate-200">{log.admin.username}</strong> ({log.admin.role})
+                      </span>
+                      <span>{new Date(log.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="text-sm text-white">
+                      Action Type: <span className="font-bold text-[#ff4d4d]">{log.actionType}</span>
+                    </p>
+                    <p className="text-slate-300">Reason: {log.reason}</p>
+                    <div className="flex gap-4 text-slate-450 mt-1">
+                      {log.targetPost && <span>Target Post ID: {log.targetPost}</span>}
+                      {log.targetUser && <span>Target User ID: {log.targetUser}</span>}
+                    </div>
+                  </div>
+                ))}
+
+                {logs.length === 0 && (
+                  <div className="text-center py-8 text-slate-500">
+                    No actions logged in security ledger.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

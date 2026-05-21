@@ -1,0 +1,416 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --------------------------------------------------
+// CORE TABLES
+// --------------------------------------------------
+
+model User {
+  id               String    @id @default(uuid())
+  username         String    @unique
+  email            String    @unique
+  passwordHash     String
+  authProvider     String    @default("email")
+  roleId           String
+  role             Role      @relation(fields: [roleId], references: [id])
+  isVerified       Boolean   @default(false)
+  isBanned         Boolean   @default(false)
+  isShadowBanned   Boolean   @default(false)
+  banReason        String?
+  bannedUntil      DateTime?
+  warningCount     Int       @default(0)
+  points           Int       @default(0)
+  reputation       Int       @default(0)
+  profileCompleted Boolean   @default(false)
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  profile               UserProfile?
+  slangEntries          SlangEntry[]         @relation("UploaderEntries")
+  comments              Comment[]
+  reactions             Reaction[]
+  reports               Report[]             @relation("Reporter")
+  reportsReviewed       Report[]             @relation("Reviewer")
+  moderationsReviewed   ModerationQueue[]    @relation("ModReviewer")
+  moderationSubmissions ModerationQueue[]    @relation("Submitter")
+  rewardTransactions    RewardTransaction[]
+  badges                UserBadge[]
+  notifications         Notification[]
+  savedEntries          SavedEntry[]
+  followers             Follow[]             @relation("Following")
+  following             Follow[]             @relation("Follower")
+  searchAnalytics       SearchAnalytic[]
+  adminLogs             AdminLog[]           @relation("Admin")
+  targetAdminLogs       AdminLog[]           @relation("TargetUser")
+  sessions              UserSession[]
+  mediaUploads          MediaUpload[]
+  auditsChanged         AuditHistory[]       @relation("Auditor")
+
+  @@index([username])
+  @@index([email])
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  description String?
+
+  // Relations
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName  String?
+  bio          String?
+  avatarUrl    String?
+  bannerUrl    String?
+  region       String?
+  country      String?
+  twitterUrl   String?
+  instagramUrl String?
+  websiteUrl   String?
+  totalUploads Int      @default(0)
+  totalViews   Int      @default(0)
+  totalLikes   Int      @default(0)
+  level        Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// --------------------------------------------------
+// CONTENT TABLES
+// --------------------------------------------------
+
+model SlangEntry {
+  id                String   @id @default(uuid())
+  slug              String   @unique
+  word              String
+  transliteration   String?
+  meaning           String
+  emotionalMeaning  String
+  exampleSentence   String
+  originRegion      String?
+  originState       String?
+  originCity        String?
+  language          String
+  severityLevel     String   @default("mild") // mild, medium, extreme
+  category          String?
+  isNsfw            Boolean  @default(false)
+  uploaderId        String?
+  uploader          User?    @relation("UploaderEntries", fields: [uploaderId], references: [id], onDelete: SetNull)
+  moderationStatus  String   @default("pending") // pending, approved, rejected, hidden, ai_flagged
+  visibilityStatus  String   @default("public") // public, hidden, deleted, shadow_hidden
+  aiRiskScore       Int      @default(0)
+  aiSimilarityScore Int      @default(0)
+  views             Int      @default(0)
+  likesCount        Int      @default(0)
+  dislikesCount     Int      @default(0)
+  commentsCount     Int      @default(0)
+  sharesCount       Int      @default(0)
+  trendingScore     Float    @default(0.0)
+  isFeatured        Boolean  @default(false)
+  isVerified        Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  tags            EntryTag[]
+  comments        Comment[]
+  reactions       Reaction[]
+  savedBy         SavedEntry[]
+  reports         Report[]
+  moderationQueue ModerationQueue[]
+  aiAnalysis      AiAnalysis?
+  mediaUploads    MediaUpload[]
+  searchAnalytics SearchAnalytic[]
+  adminLogs       AdminLog[]
+
+  @@index([word])
+  @@index([slug])
+  @@index([moderationStatus])
+  @@index([visibilityStatus])
+}
+
+model Tag {
+  id   String @id @default(uuid())
+  name String @unique
+  slug String @unique
+
+  // Relations
+  entries EntryTag[]
+}
+
+model EntryTag {
+  entryId String
+  tagId   String
+  entry   SlangEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tag     Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tagId])
+}
+
+model Comment {
+  id              String   @id @default(uuid())
+  entryId         String
+  entry           SlangEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentCommentId String?
+  parentComment   Comment? @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: SetNull)
+  replies         Comment[] @relation("CommentReplies")
+  content         String
+  likesCount      Int      @default(0)
+  isHidden        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  reports Report[]
+}
+
+model Reaction {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entryId      String
+  entry        SlangEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  reactionType String   // e.g. "like", "dislike"
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, entryId])
+}
+
+model SavedEntry {
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entryId   String
+  entry     SlangEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([userId, entryId])
+}
+
+// --------------------------------------------------
+// MODERATION TABLES
+// --------------------------------------------------
+
+model Report {
+  id           String    @id @default(uuid())
+  reporterId   String
+  reporter     User      @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  entryId      String?
+  entry        SlangEntry? @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  commentId    String?
+  comment      Comment?  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reason       String    // e.g. hate_speech, spam, harassment, fake_meaning
+  description  String?
+  status       String    @default("pending") // pending, reviewed, rejected
+  reviewedBy   String?
+  reviewer     User?     @relation("Reviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([status])
+}
+
+model ModerationQueue {
+  id             String    @id @default(uuid())
+  entryId        String
+  entry          SlangEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  submittedBy    String?
+  submitter      User?     @relation("Submitter", fields: [submittedBy], references: [id], onDelete: SetNull)
+  moderationType String    @default("manual")
+  aiFlagged      Boolean   @default(false)
+  aiReason       String?
+  aiConfidence   Int       @default(0)
+  status         String    @default("pending") // pending, approved, rejected, escalated
+  reviewedBy     String?
+  reviewer       User?     @relation("ModReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  reviewNotes    String?
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status])
+}
+
+model AdminLog {
+  id            String      @id @default(uuid())
+  adminId       String
+  admin         User        @relation("Admin", fields: [adminId], references: [id], onDelete: Cascade)
+  actionType    String      // e.g. delete_post, ban_user, approve_upload
+  targetUserId  String?
+  targetUser    User?       @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  targetEntryId String?
+  targetEntry   SlangEntry? @relation(fields: [targetEntryId], references: [id], onDelete: SetNull)
+  details       Json?
+  ipAddress     String?
+  createdAt     DateTime    @default(now())
+}
+
+model AuditHistory {
+  id          String   @id @default(uuid())
+  entityType  String
+  entityId    String
+  oldData     Json?
+  newData     Json?
+  changedBy   String?
+  changedByUser User?  @relation("Auditor", fields: [changedBy], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+}
+
+// --------------------------------------------------
+// AI TABLES
+// --------------------------------------------------
+
+model AiAnalysis {
+  id                         String   @id @default(uuid())
+  entryId                    String   @unique
+  entry                      SlangEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  toxicityScore              Float    @default(0.0)
+  hateScore                  Float    @default(0.0)
+  spamScore                  Float    @default(0.0)
+  detectedLanguage           String?
+  detectedRegion             String?
+  generatedSynonyms          Json?    // Array of synonyms
+  generatedExampleSentences  Json?    // Array of sentences
+  embeddingVector            String?
+  createdAt                  DateTime @default(now())
+}
+
+// --------------------------------------------------
+// REWARD SYSTEM TABLES
+// --------------------------------------------------
+
+model RewardTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actionType  String   // e.g. upload_approved, daily_login, comment_reward
+  points      Int
+  referenceId String?
+  description String?
+  createdAt   DateTime @default(now())
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  iconUrl     String?
+
+  // Relations
+  users       UserBadge[]
+}
+
+model UserBadge {
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId  String
+  badge    Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  earnedAt DateTime @default(now())
+
+  @@id([userId, badgeId])
+}
+
+// --------------------------------------------------
+// SOCIAL TABLES
+// --------------------------------------------------
+
+model Follow {
+  followerId  String
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // e.g. moderation, reward, comment, system
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  referenceId String?
+  createdAt   DateTime @default(now())
+}
+
+// --------------------------------------------------
+// ANALYTICS TABLES
+// --------------------------------------------------
+
+model SearchAnalytic {
+  id             String      @id @default(uuid())
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  searchQuery    String
+  resultsCount   Int         @default(0)
+  clickedEntryId String?
+  clickedEntry   SlangEntry? @relation(fields: [clickedEntryId], references: [id], onDelete: SetNull)
+  createdAt      DateTime    @default(now())
+
+  @@index([searchQuery])
+  @@index([createdAt])
+}
+
+// --------------------------------------------------
+// SYSTEM TABLES
+// --------------------------------------------------
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
+model MediaUpload {
+  id            String      @id @default(uuid())
+  uploaderId    String
+  uploader      User        @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  fileUrl       String
+  fileType      String
+  fileSize      Int
+  linkedEntryId String?
+  linkedEntry   SlangEntry? @relation(fields: [linkedEntryId], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+}
