@@ -46,7 +46,12 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: err.message || 'Internal Server Error' });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  logger.info(`🚀 GaaliHub Backend running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode.`);
-});
+// Start Server only if not running on Vercel
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => {
+    logger.info(`🚀 GaaliHub Backend running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode.`);
+  });
+}
+
+// Export the Express API for Vercel Serverless Functions
+export default app;
