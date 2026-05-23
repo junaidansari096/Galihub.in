@@ -5,7 +5,8 @@ import {
   updateUserStatus,
   getAuditLogs,
   getSystemStats,
-  updateSlangFlags
+  updateSlangFlags,
+  getUploadLogs
 } from './adminController';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware';
 import { RoleName } from '../utils/constants';
@@ -54,6 +55,13 @@ router.get(
   authenticateToken as any,
   requireRole([RoleName.ADMIN, RoleName.SUPERADMIN]) as any,
   getAuditLogs as any
+);
+
+router.get(
+  '/upload-logs',
+  authenticateToken as any,
+  requireRole([RoleName.ADMIN, RoleName.SUPERADMIN]) as any,
+  getUploadLogs as any
 );
 
 export default router;

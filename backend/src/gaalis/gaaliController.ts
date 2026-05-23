@@ -764,7 +764,7 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
     }
 
-    const { entries } = req.body;
+    const { entries, fileName } = req.body;
     if (!entries || !Array.isArray(entries)) {
       return res.status(400).json({ error: 'Invalid payload. Expecting an array of slang entries.' });
     }
@@ -894,6 +894,21 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
 
       uploadedCount++;
     }
+
+    // Create Admin Log for tracking this CSV import
+    await prisma.adminLog.create({
+      data: {
+        adminId: req.user.id,
+        actionType: 'BULK_CSV_UPLOAD',
+        details: {
+          fileName: fileName || 'galis_dataset.csv',
+          uploadedCount,
+          repeatedCount,
+          totalProcessed: entries.length,
+          uploaderType: 'SYSTEM'
+        }
+      }
+    });
 
     return res.status(200).json({
       message: 'CSV bulk upload completed successfully',

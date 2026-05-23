@@ -347,3 +347,85 @@ export const updateSlangFlags = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: error.message || 'Error updating slang flags' });
   }
 };
+
+export const getUploadLogs = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
+    }
+
+    // 1. Fetch all bulk import logs
+    const bulkLogs = await prisma.adminLog.findMany({
+      where: { actionType: 'BULK_CSV_UPLOAD' },
+      include: {
+        admin: {
+          include: {
+            role: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // 2. Fetch all individual user slang uploads
+    const individualEntries = await prisma.slangEntry.findMany({
+      include: {
+        uploader: {
+          include: {
+            role: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // 3. Format bulk uploads (SYSTEM)
+    const formattedBulkLogs = bulkLogs.map(l => {
+      const details = (l.details as any) || {};
+      return {
+        id: l.id,
+        createdAt: l.createdAt,
+        fileName: details.fileName || 'unknown_dataset.csv',
+        uploaderUsername: l.admin.username,
+        uploaderRole: mapRoleToLegacy(l.admin.role.name),
+        uploadType: 'SYSTEM',
+        uploadedCount: details.uploadedCount || 0,
+        repeatedCount: details.repeatedCount || 0,
+        summary: `Imported ${details.uploadedCount || 0} slang entries. ${details.repeatedCount || 0} duplicates skipped.`
+      };
+    });
+
+    // 4. Format user uploads (USER)
+    const formattedUserLogs = individualEntries
+      .map(entry => {
+        const uploaderName = entry.uploader?.username || 'Anonymous';
+        
+        // Skip system uploader entries because they are already accounted for in formattedBulkLogs
+        if (uploaderName.toLowerCase() === 'system') {
+          return null;
+        }
+
+        return {
+          id: entry.id,
+          createdAt: entry.createdAt,
+          fileName: 'N/A (Single Slang)',
+          uploaderUsername: uploaderName,
+          uploaderRole: entry.uploader ? mapRoleToLegacy(entry.uploader.role.name) : 'ANONYMOUS',
+          uploadType: 'USER',
+          uploadedCount: 1,
+          repeatedCount: 0,
+          summary: `Single slang entry uploaded: "${entry.word}" (${entry.originRegion}, ${entry.language})`
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    // 5. Combine and sort
+    const allLogs = [...formattedBulkLogs, ...formattedUserLogs].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return res.status(200).json({ logs: allLogs });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Error retrieving upload logs' });
+  }
+};

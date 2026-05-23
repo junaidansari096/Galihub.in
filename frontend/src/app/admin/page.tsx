@@ -42,11 +42,23 @@ interface SystemStats {
   popularSlangs: { word: string; views: number }[];
 }
 
+interface UploadLog {
+  id: string;
+  createdAt: string;
+  fileName: string;
+  uploaderUsername: string;
+  uploaderRole: string;
+  uploadType: 'SYSTEM' | 'USER';
+  uploadedCount: number;
+  repeatedCount: number;
+  summary: string;
+}
+
 export default function AdminDashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<'queue' | 'users' | 'logs' | 'import'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'users' | 'logs' | 'import' | 'uploads'>('queue');
   
   // Data states
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -68,6 +80,11 @@ export default function AdminDashboardPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importStats, setImportStats] = useState<{ uploadedCount: number; repeatedCount: number; totalProcessed: number } | null>(null);
+
+  // Upload History States
+  const [uploadLogs, setUploadLogs] = useState<UploadLog[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState<'ALL' | 'SYSTEM' | 'USER'>('ALL');
 
   // CSV Parser helpers
   const parseCSV = (text: string) => {
@@ -129,6 +146,7 @@ export default function AdminDashboardPage() {
 
   const handleImportSubmit = async () => {
     if (!selectedFile) return;
+    const fileName = selectedFile.name;
     setImporting(true);
     setError(null);
     setSuccess(null);
@@ -140,7 +158,7 @@ export default function AdminDashboardPage() {
         throw new Error('CSV file is empty or invalid.');
       }
       
-      const res = await api.importCsv(entries);
+      const res = await api.importCsv(entries, fileName);
       setImportStats({
         uploadedCount: res.uploadedCount,
         repeatedCount: res.repeatedCount,
@@ -152,6 +170,12 @@ export default function AdminDashboardPage() {
       // Refresh stats
       const statsRes = await api.getStats();
       setStats(statsRes.stats);
+
+      // Refresh upload logs
+      if (user && ['ADMIN', 'SUPERADMIN'].includes(user.role)) {
+        const uploadsRes = await api.getUploadLogs();
+        setUploadLogs(uploadsRes.logs);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to process and upload CSV.');
     } finally {
@@ -181,6 +205,9 @@ export default function AdminDashboardPage() {
       if (user && ['ADMIN', 'SUPERADMIN'].includes(user.role)) {
         const logsRes = await api.getAuditLogs();
         setLogs(logsRes.logs);
+
+        const uploadsRes = await api.getUploadLogs();
+        setUploadLogs(uploadsRes.logs);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load administrator dashboard data.');
@@ -250,6 +277,20 @@ export default function AdminDashboardPage() {
   if (!user || !['MODERATOR', 'ADMIN', 'SUPERADMIN'].includes(user.role)) {
     return <div className="text-center py-16 text-slate-400">Access Denied. Redirecting...</div>;
   }
+
+  const filteredUploadLogs = uploadLogs.filter((log) => {
+    if (filterType !== 'ALL' && log.uploadType !== filterType) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const formattedDate = new Date(log.createdAt).toLocaleString().toLowerCase();
+    return (
+      log.id.toLowerCase().includes(q) ||
+      log.uploaderUsername.toLowerCase().includes(q) ||
+      log.fileName.toLowerCase().includes(q) ||
+      log.summary.toLowerCase().includes(q) ||
+      formattedDate.includes(q)
+    );
+  });
 
   return (
     <div className="space-y-8">
@@ -332,6 +373,14 @@ export default function AdminDashboardPage() {
               }`}
             >
               Import CSV
+            </button>
+            <button
+              onClick={() => setActiveTab('uploads')}
+              className={`pb-3 border-b-2 transition-all cursor-pointer ${
+                activeTab === 'uploads' ? 'border-[#ff4d4d] text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Upload History
             </button>
           </>
         )}
@@ -605,6 +654,112 @@ export default function AdminDashboardPage() {
                 >
                   {importing ? 'Processing & Uploading...' : 'Upload & Import Dataset'}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* 5. UPLOAD HISTORY TAB */}
+          {activeTab === 'uploads' && ['ADMIN', 'SUPERADMIN'].includes(user.role) && (
+            <div className="bg-[#1e293b] border border-[#334155] rounded-2xl overflow-hidden shadow-md space-y-6 p-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#334155] pb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-[#ff4d4d]" /> Upload History Ledger
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Audit and track all slang imports and single user/anonymous uploads.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  {/* Filter Dropdown */}
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value as any)}
+                    className="px-3 py-2 rounded-lg bg-[#0f172a] border border-[#334155] text-slate-200 text-xs font-semibold focus:outline-none focus:border-[#ff4d4d] cursor-pointer"
+                  >
+                    <option value="ALL">All Upload Types</option>
+                    <option value="SYSTEM">System Imports (CSV)</option>
+                    <option value="USER">User & Anon Uploads</option>
+                  </select>
+
+                  {/* Search bar */}
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search username, ID, file, date..."
+                    className="px-3 py-2 rounded-lg bg-[#0f172a] border border-[#334155] text-white placeholder-slate-500 text-xs focus:outline-none focus:border-[#ff4d4d] w-full sm:w-60"
+                  />
+                </div>
+              </div>
+
+              {/* Logs Table / List */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-[#334155]/85 text-slate-400 font-bold uppercase tracking-wider">
+                      <th className="py-3 px-4">Log ID / Timestamp</th>
+                      <th className="py-3 px-4">Uploader</th>
+                      <th className="py-3 px-4">File Name / Context</th>
+                      <th className="py-3 px-4">Method</th>
+                      <th className="py-3 px-4">Status / Summary</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#334155]/50 text-slate-200">
+                    {filteredUploadLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-slate-800/20 transition-all">
+                        <td className="py-4 px-4 space-y-1">
+                          <span className="font-mono text-[10px] text-slate-400 block truncate max-w-[120px]" title={log.id}>
+                            {log.id}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {new Date(log.createdAt).toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4 space-y-0.5">
+                          <span className="font-bold text-slate-200 block">{log.uploaderUsername}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400 font-bold uppercase inline-block">
+                            {log.uploaderRole}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span className="font-semibold text-slate-300 break-all max-w-[200px] inline-block">
+                            {log.fileName}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[9px] font-black tracking-wider uppercase inline-block ${
+                              log.uploadType === 'SYSTEM'
+                                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                                : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            }`}
+                          >
+                            {log.uploadType === 'SYSTEM' ? 'SYSTEM (CSV)' : 'USER UPLOAD'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <p className="text-slate-300 font-medium">{log.summary}</p>
+                          <div className="flex gap-2.5 mt-1 text-[10px] text-slate-400">
+                            <span>Uploaded: <strong className="text-emerald-400">{log.uploadedCount}</strong></span>
+                            {log.uploadType === 'SYSTEM' && (
+                              <span>Repeated: <strong className="text-amber-500">{log.repeatedCount}</strong></span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {filteredUploadLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-center py-10 text-slate-500">
+                          No matching upload logs found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
