@@ -769,6 +769,45 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid payload. Expecting an array of slang entries.' });
     }
 
+    // Safety validation layer: Check formatting of all rows first.
+    // If any row has bad formatting, reject the entire file.
+    const validationErrors: string[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const item = entries[i];
+      const rowNum = i + 2; // Row number in CSV file (Header is row 1, index 0 is row 2)
+
+      const word = item.word ? String(item.word).trim() : '';
+      const meaning = item.meaning ? String(item.meaning).trim() : '';
+
+      if (!word) {
+        validationErrors.push(`Row ${rowNum}: 'word' is empty or missing.`);
+      }
+      if (!meaning) {
+        validationErrors.push(`Row ${rowNum}: 'meaning' is empty or missing.`);
+      }
+
+      if (item.severityLevel) {
+        const sev = String(item.severityLevel).trim().toUpperCase();
+        if (sev !== 'MILD' && sev !== 'MEDIUM' && sev !== 'EXTREME') {
+          validationErrors.push(`Row ${rowNum}: 'severityLevel' must be MILD, MEDIUM, or EXTREME (found: '${item.severityLevel}').`);
+        }
+      }
+
+      if (item.isNsfw !== undefined && item.isNsfw !== null && String(item.isNsfw).trim() !== '') {
+        const nsfwStr = String(item.isNsfw).trim().toLowerCase();
+        if (nsfwStr !== 'true' && nsfwStr !== 'false' && typeof item.isNsfw !== 'boolean') {
+          validationErrors.push(`Row ${rowNum}: 'isNsfw' must be true or false (found: '${item.isNsfw}').`);
+        }
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Validation failed. The entire file has been rejected.',
+        details: validationErrors
+      });
+    }
+
     // 1. Get or create the System user
     let systemUser = await prisma.user.findFirst({
       where: { username: { equals: 'system', mode: 'insensitive' } }

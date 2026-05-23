@@ -27,7 +27,10 @@ const fetchAPI = async (endpoint: string, options: RequestInit = {}) => {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.error || 'Something went wrong');
+    const error: any = new Error(data.error || 'Something went wrong');
+    error.details = data.details;
+    error.error = data.error;
+    throw error;
   }
 
   return data;

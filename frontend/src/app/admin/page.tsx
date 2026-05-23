@@ -80,6 +80,7 @@ export default function AdminDashboardPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importStats, setImportStats] = useState<{ uploadedCount: number; repeatedCount: number; totalProcessed: number } | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
 
   // Upload History States
   const [uploadLogs, setUploadLogs] = useState<UploadLog[]>([]);
@@ -150,6 +151,7 @@ export default function AdminDashboardPage() {
     setImporting(true);
     setError(null);
     setSuccess(null);
+    setImportErrors([]);
     
     try {
       const text = await selectedFile.text();
@@ -177,6 +179,9 @@ export default function AdminDashboardPage() {
         setUploadLogs(uploadsRes.logs);
       }
     } catch (err: any) {
+      if (err.details && Array.isArray(err.details)) {
+        setImportErrors(err.details);
+      }
       setError(err.message || 'Failed to process and upload CSV.');
     } finally {
       setImporting(false);
@@ -643,6 +648,23 @@ export default function AdminDashboardPage() {
                         <span className="text-slate-400 block font-semibold">Total Processed</span>
                         <span className="text-lg font-black text-white">{importStats.totalProcessed}</span>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {importErrors.length > 0 && (
+                  <div className="p-5 rounded-xl bg-rose-500/10 border border-rose-500/20 space-y-2">
+                    <h4 className="text-sm font-bold text-rose-450">❌ File Rejected: Formatting Errors Detected</h4>
+                    <p className="text-xs text-slate-400">
+                      The entire file was rejected to prevent data corruption. Please fix these rows in your CSV and try again:
+                    </p>
+                    <div className="max-h-40 overflow-y-auto space-y-1 text-[11px] font-mono text-rose-300 bg-[#0f172a]/60 p-3 rounded-lg border border-[#334155]/60">
+                      {importErrors.map((err, idx) => (
+                        <div key={idx} className="flex gap-1.5">
+                          <span className="text-rose-500">•</span>
+                          <span>{err}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
