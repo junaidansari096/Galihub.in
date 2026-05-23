@@ -757,3 +757,151 @@ export const getRandomGaali = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: error.message || 'Error fetching random slang' });
   }
 };
+
+export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
+    }
+
+    const { entries } = req.body;
+    if (!entries || !Array.isArray(entries)) {
+      return res.status(400).json({ error: 'Invalid payload. Expecting an array of slang entries.' });
+    }
+
+    // 1. Get or create the System user
+    let systemUser = await prisma.user.findFirst({
+      where: { username: { equals: 'system', mode: 'insensitive' } }
+    });
+
+    if (!systemUser) {
+      // Find the ADMIN role
+      const adminRole = await prisma.role.findFirst({
+        where: { name: { equals: 'ADMIN', mode: 'insensitive' } }
+      });
+      
+      if (!adminRole) {
+        return res.status(500).json({ error: 'System Admin role not found. Run database seeding first.' });
+      }
+
+      systemUser = await prisma.user.create({
+        data: {
+          username: 'system',
+          email: 'system@galihub.in',
+          passwordHash: 'SYSTEM_MANAGED_ACCOUNT_NO_LOGIN',
+          roleId: adminRole.id,
+          isVerified: true
+        }
+      });
+    }
+
+    let uploadedCount = 0;
+    let repeatedCount = 0;
+
+    for (const item of entries) {
+      const word = item.word ? String(item.word).trim() : '';
+      const meaning = item.meaning ? String(item.meaning).trim() : '';
+      const emotionalMeaning = item.emotionalMeaning ? String(item.emotionalMeaning).trim() : meaning;
+      const exampleSentence = item.exampleSentence ? String(item.exampleSentence).trim() : '';
+      const originRegion = item.originRegion ? String(item.originRegion).trim() : 'General';
+      const language = item.language ? String(item.language).trim() : 'Hindi';
+      const severityLevel = item.severityLevel ? String(item.severityLevel).trim() : 'mild';
+      const isNsfw = item.isNsfw === true || item.isNsfw === 'true';
+
+      if (!word || !meaning) {
+        repeatedCount++; // Mark incomplete entries as skipped
+        continue;
+      }
+
+      // Check case-insensitive duplication
+      const existing = await prisma.slangEntry.findFirst({
+        where: { word: { equals: word, mode: 'insensitive' } }
+      });
+
+      if (existing) {
+        repeatedCount++;
+        continue;
+      }
+
+      // 2. Generate slug
+      let slug = slugify(word);
+      let slugExists = await prisma.slangEntry.findUnique({ where: { slug } });
+      let counter = 1;
+      while (slugExists) {
+        const newSlug = `${slug}-${counter}`;
+        slugExists = await prisma.slangEntry.findUnique({ where: { slug: newSlug } });
+        if (!slugExists) {
+          slug = newSlug;
+          break;
+        }
+        counter++;
+      }
+
+      // 3. Normalize severity
+      let cleanSeverity = Severity.MILD;
+      const rawSev = severityLevel.toUpperCase();
+      if (rawSev === 'MILD') cleanSeverity = Severity.MILD;
+      else if (rawSev === 'MEDIUM') cleanSeverity = Severity.MEDIUM;
+      else if (rawSev === 'EXTREME') cleanSeverity = Severity.EXTREME;
+
+      // 4. Create database entry
+      const slang = await prisma.slangEntry.create({
+        data: {
+          word,
+          slug,
+          meaning,
+          emotionalMeaning,
+          exampleSentence,
+          originRegion,
+          language,
+          severityLevel: cleanSeverity,
+          isNsfw,
+          uploaderId: systemUser.id,
+          moderationStatus: PostStatus.APPROVED // Direct approval for Admin uploads
+        }
+      });
+
+      // 5. Parse and map tags
+      const rawTags = item.tags || '';
+      const tagList = Array.isArray(rawTags)
+        ? rawTags.map(t => String(t).trim().toLowerCase()).filter(Boolean)
+        : typeof rawTags === 'string'
+          ? rawTags.split(',').map((t: string) => t.trim().toLowerCase()).filter(Boolean)
+          : [];
+
+      for (const tagName of tagList) {
+        const cleanTagSlug = slugify(tagName);
+        const tagRecord = await prisma.tag.upsert({
+          where: { name: tagName },
+          update: {},
+          create: { name: tagName, slug: cleanTagSlug }
+        });
+
+        await prisma.entryTag.upsert({
+          where: {
+            entryId_tagId: {
+              entryId: slang.id,
+              tagId: tagRecord.id
+            }
+          },
+          update: {},
+          create: {
+            entryId: slang.id,
+            tagId: tagRecord.id
+          }
+        });
+      }
+
+      uploadedCount++;
+    }
+
+    return res.status(200).json({
+      message: 'CSV bulk upload completed successfully',
+      uploadedCount,
+      repeatedCount,
+      totalProcessed: entries.length
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Error processing CSV bulk upload' });
+  }
+};

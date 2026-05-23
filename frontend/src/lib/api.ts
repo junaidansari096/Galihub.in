@@ -71,4 +71,5 @@ export const api = {
   getStats: () => fetchAPI('/admin/stats'),
   updateSlangFlags: (id: string, body: { isNsfw?: boolean; isVerified?: boolean; isFeatured?: boolean }) =>
     fetchAPI(`/admin/slang/${id}/flags`, { method: 'PUT', body: JSON.stringify(body) }),
+  importCsv: (entries: any[]) => fetchAPI('/gaalis/import-csv', { method: 'POST', body: JSON.stringify({ entries }) }),
 };

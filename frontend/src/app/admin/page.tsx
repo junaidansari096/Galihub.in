@@ -46,7 +46,7 @@ export default function AdminDashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<'queue' | 'users' | 'logs'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'users' | 'logs' | 'import'>('queue');
   
   // Data states
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -63,6 +63,101 @@ export default function AdminDashboardPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // CSV Import States
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importStats, setImportStats] = useState<{ uploadedCount: number; repeatedCount: number; totalProcessed: number } | null>(null);
+
+  // CSV Parser helpers
+  const parseCSV = (text: string) => {
+    const lines = text.split(/\r?\n/);
+    if (lines.length === 0) return [];
+    
+    const headers = parseCSVLine(lines[0]);
+    const results: any[] = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      const values = parseCSVLine(line);
+      const row: any = {};
+      headers.forEach((header, index) => {
+        row[header.trim()] = values[index] ? values[index].trim() : '';
+      });
+      results.push(row);
+    }
+    return results;
+  };
+
+  const parseCSVLine = (line: string) => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    
+    return result.map(val => {
+      let clean = val.trim();
+      if (clean.startsWith('"') && clean.endsWith('"')) {
+        clean = clean.slice(1, -1);
+      }
+      return clean.replace(/""/g, '"');
+    });
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFile(e.target.files[0]);
+      setImportStats(null);
+      setError(null);
+      setSuccess(null);
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (!selectedFile) return;
+    setImporting(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const text = await selectedFile.text();
+      const entries = parseCSV(text);
+      if (entries.length === 0) {
+        throw new Error('CSV file is empty or invalid.');
+      }
+      
+      const res = await api.importCsv(entries);
+      setImportStats({
+        uploadedCount: res.uploadedCount,
+        repeatedCount: res.repeatedCount,
+        totalProcessed: res.totalProcessed
+      });
+      setSuccess(`Dataset import finished: ${res.uploadedCount} uploaded, ${res.repeatedCount} repeated/skipped.`);
+      setSelectedFile(null);
+      
+      // Refresh stats
+      const statsRes = await api.getStats();
+      setStats(statsRes.stats);
+    } catch (err: any) {
+      setError(err.message || 'Failed to process and upload CSV.');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // Redirect if unauthorized
   useEffect(() => {
@@ -229,6 +324,14 @@ export default function AdminDashboardPage() {
               }`}
             >
               System Audit Logs ({logs.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('import')}
+              className={`pb-3 border-b-2 transition-all cursor-pointer ${
+                activeTab === 'import' ? 'border-[#ff4d4d] text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Import CSV
             </button>
           </>
         )}
@@ -434,6 +537,74 @@ export default function AdminDashboardPage() {
                     No actions logged in security ledger.
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 4. CSV IMPORT TAB */}
+          {activeTab === 'import' && ['ADMIN', 'SUPERADMIN'].includes(user.role) && (
+            <div className="bg-[#1e293b] border border-[#334155] p-8 rounded-2xl space-y-6">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2 border-b border-[#334155] pb-3">
+                <FileText className="h-5 w-5 text-[#ff4d4d]" /> Bulk Import Slangs from CSV
+              </h3>
+
+              <div className="space-y-4">
+                <p className="text-sm text-slate-400">
+                  Select a CSV file containing slang definitions. The file should have columns matching: 
+                  <code className="bg-[#0f172a] px-1.5 py-0.5 rounded text-white ml-1 text-xs font-mono">
+                    word, meaning, emotionalMeaning, exampleSentence, originRegion, language, severityLevel, isNsfw, tags
+                  </code>
+                </p>
+
+                <div className="p-8 border-2 border-dashed border-[#334155] hover:border-[#ff4d4d]/60 rounded-xl bg-[#0f172a]/30 transition-all flex flex-col items-center justify-center gap-3">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="csv-file-upload"
+                  />
+                  <label
+                    htmlFor="csv-file-upload"
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 hover:text-white rounded-lg border border-[#334155] cursor-pointer transition-all"
+                  >
+                    Choose CSV File
+                  </label>
+                  {selectedFile && (
+                    <div className="text-center space-y-1">
+                      <p className="text-sm font-semibold text-emerald-400">{selectedFile.name}</p>
+                      <p className="text-xs text-slate-500">{(selectedFile.size / 1024).toFixed(2)} KB</p>
+                    </div>
+                  )}
+                </div>
+
+                {importStats && (
+                  <div className="p-5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                    <h4 className="text-sm font-bold text-emerald-400">🎉 Import Completed Successfully!</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs pt-1">
+                      <div className="p-3 bg-emerald-500/5 rounded-lg border border-emerald-500/10">
+                        <span className="text-slate-400 block font-semibold">New Uploaded</span>
+                        <span className="text-lg font-black text-white">{importStats.uploadedCount}</span>
+                      </div>
+                      <div className="p-3 bg-amber-500/5 rounded-lg border border-amber-500/10">
+                        <span className="text-slate-400 block font-semibold">Repeated (Skipped)</span>
+                        <span className="text-lg font-black text-amber-400">{importStats.repeatedCount}</span>
+                      </div>
+                      <div className="p-3 bg-slate-800/30 rounded-lg border border-slate-700">
+                        <span className="text-slate-400 block font-semibold">Total Processed</span>
+                        <span className="text-lg font-black text-white">{importStats.totalProcessed}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleImportSubmit}
+                  disabled={!selectedFile || importing}
+                  className="w-full py-3 rounded-lg bg-[#ff4d4d] hover:bg-[#e04343] disabled:bg-slate-800 disabled:text-slate-500 disabled:pointer-events-none text-sm font-bold text-white transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {importing ? 'Processing & Uploading...' : 'Upload & Import Dataset'}
+                </button>
               </div>
             </div>
           )}
