@@ -6,7 +6,8 @@ import {
   getAuditLogs,
   getSystemStats,
   updateSlangFlags,
-  getUploadLogs
+  getUploadLogs,
+  rollbackUpload
 } from './adminController';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware';
 import { RoleName } from '../utils/constants';
@@ -62,6 +63,13 @@ router.get(
   authenticateToken as any,
   requireRole([RoleName.ADMIN, RoleName.SUPERADMIN]) as any,
   getUploadLogs as any
+);
+
+router.post(
+  '/rollback-upload/:logId',
+  authenticateToken as any,
+  requireRole([RoleName.ADMIN, RoleName.SUPERADMIN]) as any,
+  rollbackUpload as any
 );
 
 export default router;

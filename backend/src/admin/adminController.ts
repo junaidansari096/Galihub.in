@@ -354,9 +354,11 @@ export const getUploadLogs = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
     }
 
-    // 1. Fetch all bulk import logs
+    // 1. Fetch all bulk import logs (both active and rolled back)
     const bulkLogs = await prisma.adminLog.findMany({
-      where: { actionType: 'BULK_CSV_UPLOAD' },
+      where: {
+        actionType: { in: ['BULK_CSV_UPLOAD', 'BULK_CSV_ROLLBACK'] }
+      },
       include: {
         admin: {
           include: {
@@ -382,6 +384,7 @@ export const getUploadLogs = async (req: AuthRequest, res: Response) => {
     // 3. Format bulk uploads (SYSTEM)
     const formattedBulkLogs = bulkLogs.map(l => {
       const details = (l.details as any) || {};
+      const isReverted = l.actionType === 'BULK_CSV_ROLLBACK' || !!details.revertedAt;
       return {
         id: l.id,
         createdAt: l.createdAt,
@@ -391,7 +394,10 @@ export const getUploadLogs = async (req: AuthRequest, res: Response) => {
         uploadType: 'SYSTEM',
         uploadedCount: details.uploadedCount || 0,
         repeatedCount: details.repeatedCount || 0,
-        summary: `Imported ${details.uploadedCount || 0} slang entries. ${details.repeatedCount || 0} duplicates skipped.`
+        isReverted,
+        summary: isReverted
+          ? `Imported ${details.uploadedCount || 0} slang entries (Reverted / Rolled Back).`
+          : `Imported ${details.uploadedCount || 0} slang entries. ${details.repeatedCount || 0} duplicates skipped.`
       };
     });
 
@@ -414,6 +420,7 @@ export const getUploadLogs = async (req: AuthRequest, res: Response) => {
           uploadType: 'USER',
           uploadedCount: 1,
           repeatedCount: 0,
+          isReverted: false,
           summary: `Single slang entry uploaded: "${entry.word}" (${entry.originRegion}, ${entry.language})`
         };
       })
@@ -427,5 +434,114 @@ export const getUploadLogs = async (req: AuthRequest, res: Response) => {
     return res.status(200).json({ logs: allLogs });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Error retrieving upload logs' });
+  }
+};
+
+export const rollbackUpload = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user || !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
+    }
+
+    const { logId } = req.params;
+    if (!logId) {
+      return res.status(400).json({ error: 'Log ID is required' });
+    }
+
+    // 1. Find the admin log
+    const log = await prisma.adminLog.findUnique({
+      where: { id: logId }
+    });
+
+    if (!log) {
+      return res.status(404).json({ error: 'Upload log not found' });
+    }
+
+    if (log.actionType !== 'BULK_CSV_UPLOAD' && log.actionType !== 'BULK_CSV_ROLLBACK') {
+      return res.status(400).json({ error: 'Only bulk CSV uploads can be rolled back' });
+    }
+
+    const details = (log.details as any) || {};
+    
+    // Check if already reverted
+    if (log.actionType === 'BULK_CSV_ROLLBACK' || details.revertedAt) {
+      return res.status(400).json({ error: 'This CSV upload has already been rolled back' });
+    }
+
+    // 2. Identify slang entries to delete
+    let createdSlangIds: string[] = details.createdSlangIds || [];
+    
+    if (createdSlangIds.length === 0) {
+      // Fallback: Find slangs created by system user within 15 seconds of the log's createdAt
+      const logTime = new Date(log.createdAt);
+      const startTime = new Date(logTime.getTime() - 15000);
+      const endTime = new Date(logTime.getTime() + 15000);
+      
+      const systemUser = await prisma.user.findFirst({
+        where: { username: { equals: 'system', mode: 'insensitive' } }
+      });
+      
+      if (systemUser) {
+        const slangs = await prisma.slangEntry.findMany({
+          where: {
+            uploaderId: systemUser.id,
+            createdAt: {
+              gte: startTime,
+              lte: endTime
+            }
+          },
+          select: { id: true }
+        });
+        createdSlangIds = slangs.map(s => s.id);
+      }
+    }
+
+    if (createdSlangIds.length === 0) {
+      return res.status(404).json({ 
+        error: 'No slang entries associated with this upload log could be found to delete.' 
+      });
+    }
+
+    // 3. Delete matching slang entries (Prisma onDelete: Cascade will clean up dependencies)
+    const deleteResult = await prisma.slangEntry.deleteMany({
+      where: {
+        id: { in: createdSlangIds }
+      }
+    });
+
+    // 4. Update the log to record the rollback details
+    const updatedDetails = {
+      ...details,
+      revertedAt: new Date().toISOString(),
+      revertedBy: req.user.id,
+      revertedCount: deleteResult.count
+    };
+
+    await prisma.adminLog.update({
+      where: { id: logId },
+      data: {
+        actionType: 'BULK_CSV_ROLLBACK', // Change action type to reflect state change
+        details: updatedDetails
+      }
+    });
+
+    // 5. Audit log
+    await prisma.auditHistory.create({
+      data: {
+        entityType: 'BULK_CSV_ROLLBACK',
+        entityId: logId,
+        changedBy: req.user.id,
+        oldData: details,
+        newData: updatedDetails
+      }
+    });
+
+    return res.status(200).json({
+      message: `Rollback completed successfully. Deleted ${deleteResult.count} slang entries.`,
+      deletedCount: deleteResult.count
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Error processing rollback' });
   }
 };

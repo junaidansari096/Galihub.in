@@ -76,4 +76,5 @@ export const api = {
     fetchAPI(`/admin/slang/${id}/flags`, { method: 'PUT', body: JSON.stringify(body) }),
   importCsv: (entries: any[], fileName?: string) => fetchAPI('/gaalis/import-csv', { method: 'POST', body: JSON.stringify({ entries, fileName }) }),
   getUploadLogs: () => fetchAPI('/admin/upload-logs'),
+  rollbackUpload: (logId: string) => fetchAPI(`/admin/rollback-upload/${logId}`, { method: 'POST' }),
 };

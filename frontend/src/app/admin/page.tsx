@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
-import { ShieldCheck, Users, FileText, Activity, Check, X, Ban, ShieldAlert, Key, Clock } from 'lucide-react';
+import { ShieldCheck, Users, FileText, Activity, Check, X, Ban, ShieldAlert, Key, Clock, RotateCcw } from 'lucide-react';
 
 interface QueueItem {
   id: string;
@@ -52,6 +52,7 @@ interface UploadLog {
   uploadedCount: number;
   repeatedCount: number;
   summary: string;
+  isReverted: boolean;
 }
 
 export default function AdminDashboardPage() {
@@ -86,6 +87,7 @@ export default function AdminDashboardPage() {
   const [uploadLogs, setUploadLogs] = useState<UploadLog[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'SYSTEM' | 'USER'>('ALL');
+  const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
 
   // CSV Parser helpers
   const parseCSV = (text: string) => {
@@ -276,6 +278,37 @@ export default function AdminDashboardPage() {
       }
     } catch (err: any) {
       setError(err.message || 'Failed to penalize user. Verify username is correct.');
+    }
+  };
+
+  const handleRollback = async (logId: string) => {
+    const confirmRevert = window.confirm(
+      "WARNING: Are you sure you want to rollback/revert this bulk CSV upload?\n\nThis will permanently delete all slang entries imported in this specific batch. This action cannot be undone."
+    );
+    if (!confirmRevert) return;
+
+    setRollbackLoading(logId);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await api.rollbackUpload(logId);
+      setSuccess(res.message || 'CSV upload successfully rolled back.');
+      
+      // Refresh statistics
+      const statsRes = await api.getStats();
+      setStats(statsRes.stats);
+      
+      // Refresh upload logs
+      const uploadsRes = await api.getUploadLogs();
+      setUploadLogs(uploadsRes.logs);
+
+      // Refresh moderation queue
+      const queueRes = await api.getQueue();
+      setQueue(queueRes.queue);
+    } catch (err: any) {
+      setError(err.message || 'Failed to rollback CSV upload.');
+    } finally {
+      setRollbackLoading(null);
     }
   };
 
@@ -726,6 +759,7 @@ export default function AdminDashboardPage() {
                       <th className="py-3 px-4">File Name / Context</th>
                       <th className="py-3 px-4">Method</th>
                       <th className="py-3 px-4">Status / Summary</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#334155]/50 text-slate-200">
@@ -770,12 +804,33 @@ export default function AdminDashboardPage() {
                             )}
                           </div>
                         </td>
+                        <td className="py-4 px-4 text-right">
+                          {log.uploadType === 'SYSTEM' && (
+                            log.isReverted ? (
+                              <span className="text-[10px] font-bold text-rose-500/80 bg-rose-500/5 border border-rose-500/20 px-2.5 py-1 rounded-lg">
+                                Rolled Back
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleRollback(log.id)}
+                                disabled={rollbackLoading !== null}
+                                className="px-2.5 py-1 text-[10px] font-bold text-rose-450 hover:text-white border border-rose-500/30 hover:bg-[#ff4d4d] hover:border-[#ff4d4d] rounded-lg transition-all disabled:opacity-50 disabled:pointer-events-none cursor-pointer flex items-center gap-1 ml-auto"
+                              >
+                                <RotateCcw className={`h-3 w-3 ${rollbackLoading === log.id ? 'animate-spin' : ''}`} />
+                                {rollbackLoading === log.id ? 'Reverting...' : 'Rollback'}
+                              </button>
+                            )
+                          )}
+                          {log.uploadType === 'USER' && (
+                            <span className="text-slate-500 text-[10px] italic">No actions</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
 
                     {filteredUploadLogs.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="text-center py-10 text-slate-500">
+                        <td colSpan={6} className="text-center py-10 text-slate-500">
                           No matching upload logs found.
                         </td>
                       </tr>

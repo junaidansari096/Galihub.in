@@ -836,6 +836,7 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
 
     let uploadedCount = 0;
     let repeatedCount = 0;
+    const createdSlangIds: string[] = [];
 
     for (const item of entries) {
       const word = item.word ? String(item.word).trim() : '';
@@ -899,6 +900,7 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
           moderationStatus: PostStatus.APPROVED // Direct approval for Admin uploads
         }
       });
+      createdSlangIds.push(slang.id);
 
       // 5. Parse and map tags
       const rawTags = item.tags || '';
@@ -944,7 +946,8 @@ export const importCsvGaalis = async (req: AuthRequest, res: Response) => {
           uploadedCount,
           repeatedCount,
           totalProcessed: entries.length,
-          uploaderType: 'SYSTEM'
+          uploaderType: 'SYSTEM',
+          createdSlangIds
         }
       }
     });
