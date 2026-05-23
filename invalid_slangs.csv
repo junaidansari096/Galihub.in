@@ -1,6 +1,0 @@
-word,meaning,emotionalMeaning,exampleSentence,originRegion,language,severityLevel,isNsfw,tags
-,This row is invalid because the word is empty,Used to test empty word validation,Empty word test,Delhi,Hindi,MILD,false,error
-Ghanta,,Used to test empty meaning validation,Empty meaning test,Mumbai,Hindi,MILD,false,error
-Chant,Cunning,Used to test invalid severity level,Invalid severity test,Uttar Pradesh,Hindi,HIGH,false,error
-Saala,Brother-in-law,Used to test invalid isNsfw type,Invalid NSFW test,Delhi,Hindi,MILD,yes,error
-Bhenchod,Sisterfucker,Common street slang,Bhenchod test,Delhi,Hindi,EXTREME,true,abuse

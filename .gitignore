@@ -38,3 +38,7 @@ yarn-error.log*
 # Agent-specific directories
 .agents/
 .gemini/
+
+# Slang test datasets
+valid_slangs.csv
+invalid_slangs.csv
