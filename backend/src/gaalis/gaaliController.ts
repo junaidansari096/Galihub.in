@@ -310,18 +310,18 @@ export const getGaaliBySlug = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Slang not found' });
     }
 
-    // Allow uploader, moderators and admins to view pending/hidden ones
-    if (slang.moderationStatus !== PostStatus.APPROVED) {
-      const isAuthorized = req.user && (
+    // Check authorization for the specific slang if it's not approved
+    const isAuthorizedForTarget = slang.moderationStatus === PostStatus.APPROVED || (
+      req.user && (
         req.user.id === slang.uploaderId ||
         req.user.role === RoleName.MODERATOR ||
         req.user.role === RoleName.ADMIN ||
         req.user.role === RoleName.SUPERADMIN
-      );
+      )
+    );
 
-      if (!isAuthorized) {
-        return res.status(404).json({ error: 'Slang not found' });
-      }
+    if (!isAuthorizedForTarget) {
+      return res.status(404).json({ error: 'Slang not found' });
     }
 
     // Increment view count asynchronously
@@ -348,23 +348,72 @@ export const getGaaliBySlug = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const formattedGaali = {
-      ...slang,
-      likes: slang.likesCount,
-      dislikes: slang.dislikesCount,
-      severity: slang.severityLevel,
-      status: slang.moderationStatus,
-      tags: slang.tags.map(t => t.tag),
-      aiToxicityScore: slang.aiRiskScore || 0,
-      synonyms: (slang.aiAnalysis?.generatedSynonyms as string[]) || [],
-      uploader: slang.uploader ? {
-        id: slang.uploader.id,
-        username: slang.uploader.username,
-        role: mapRoleToLegacy(slang.uploader.role.name),
-        reputation: getReputationLabel(slang.uploader.reputation),
-        points: slang.uploader.points
+    // Fetch all definitions for this word (case-insensitive)
+    const showUnapproved = req.user && (
+      req.user.role === RoleName.MODERATOR ||
+      req.user.role === RoleName.ADMIN ||
+      req.user.role === RoleName.SUPERADMIN
+    );
+
+    const definitions = await prisma.slangEntry.findMany({
+      where: {
+        word: { equals: slang.word, mode: 'insensitive' },
+        OR: showUnapproved
+          ? undefined
+          : [
+              { moderationStatus: PostStatus.APPROVED },
+              req.user ? { id: slang.id, uploaderId: req.user.id } : undefined
+            ].filter(Boolean) as any
+      },
+      include: {
+        tags: {
+          include: {
+            tag: true
+          }
+        },
+        aiAnalysis: true,
+        uploader: {
+          include: {
+            role: true
+          }
+        },
+        comments: {
+          include: {
+            user: {
+              include: {
+                role: true
+              }
+            }
+          },
+          orderBy: {
+            createdAt: 'desc'
+          }
+        }
+      },
+      orderBy: [
+        { isVerified: 'desc' },
+        { likesCount: 'desc' },
+        { createdAt: 'desc' }
+      ]
+    });
+
+    const formattedDefinitions = definitions.map(s => ({
+      ...s,
+      likes: s.likesCount,
+      dislikes: s.dislikesCount,
+      severity: s.severityLevel,
+      status: s.moderationStatus,
+      tags: s.tags.map(t => t.tag),
+      aiToxicityScore: s.aiRiskScore || 0,
+      synonyms: (s.aiAnalysis?.generatedSynonyms as string[]) || [],
+      uploader: s.uploader ? {
+        id: s.uploader.id,
+        username: s.uploader.username,
+        role: mapRoleToLegacy(s.uploader.role.name),
+        reputation: getReputationLabel(s.uploader.reputation),
+        points: s.uploader.points
       } : null,
-      comments: slang.comments.map(c => ({
+      comments: s.comments.map(c => ({
         ...c,
         user: {
           username: c.user.username,
@@ -372,9 +421,21 @@ export const getGaaliBySlug = async (req: AuthRequest, res: Response) => {
           reputation: getReputationLabel(c.user.reputation)
         }
       }))
-    };
+    }));
 
-    return res.status(200).json({ gaali: formattedGaali });
+    // Ensure the specifically requested slug is at the top of the list if it isn't already
+    const primaryIndex = formattedDefinitions.findIndex(d => d.id === slang.id);
+    let orderedDefinitions = [...formattedDefinitions];
+    if (primaryIndex > 0) {
+      const [primary] = orderedDefinitions.splice(primaryIndex, 1);
+      orderedDefinitions.unshift(primary);
+    }
+
+    return res.status(200).json({
+      gaali: orderedDefinitions[0], // Keep backward compatibility for single-object consumers
+      word: slang.word,
+      definitions: orderedDefinitions
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Error fetching details' });
   }
