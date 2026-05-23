@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Search, MapPin, Eye, ThumbsUp, Calendar, Trophy, Sparkles, RefreshCw, Bookmark, Share2 } from 'lucide-react';
+import AgeVerificationModal from '@/components/AgeVerificationModal';
 
 const REGIONS = [
   'All', 'Delhi', 'Uttar Pradesh', 'Bihar', 'West Bengal', 'Maharashtra', 
@@ -19,6 +20,8 @@ interface Gaali {
   language: string;
   likes: number;
   views: number;
+  severity?: string;
+  isNsfw?: boolean;
   uploader?: {
     username: string;
     role: string;
@@ -44,6 +47,16 @@ export default function HomePage() {
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingRandom, setLoadingRandom] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const [showAdultContent, setShowAdultContent] = useState(false);
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+
+  // Sync confirmation from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setShowAdultContent(localStorage.getItem('isAdultConfirmed') === 'true');
+    }
+  }, []);
 
   // Fetch initial trending data and leaderboard
   useEffect(() => {
@@ -94,7 +107,23 @@ export default function HomePage() {
     setLoadingRandom(true);
     try {
       const res = await api.getRandom();
-      setRandomGaali(res.gaali);
+      // If random slang is extreme and user has not confirmed 18+, fetch another one
+      const confirmed = typeof window !== 'undefined' ? localStorage.getItem('isAdultConfirmed') === 'true' : false;
+      const isExtreme = (g: any) => g && (g.severityLevel === 'EXTREME' || g.severity === 'EXTREME' || g.isNsfw);
+      
+      if (res.gaali && isExtreme(res.gaali) && !confirmed) {
+        let safeGaali = res.gaali;
+        for (let i = 0; i < 3; i++) {
+          const retryRes = await api.getRandom();
+          if (retryRes.gaali && !isExtreme(retryRes.gaali)) {
+            safeGaali = retryRes.gaali;
+            break;
+          }
+        }
+        setRandomGaali(safeGaali);
+      } else {
+        setRandomGaali(res.gaali);
+      }
     } catch (err) {
       console.error('Failed to fetch random slang', err);
     } finally {
@@ -114,8 +143,30 @@ export default function HomePage() {
   const hasActiveSearch = searchQuery.trim() !== '' || selectedRegion !== 'All';
   const displayList = hasActiveSearch ? searchResults : trending;
 
+  // Filter list by 18+ content setting
+  const hasHiddenExtreme = displayList.some(g => g.severity === 'EXTREME' || g.isNsfw);
+  const filteredDisplayList = displayList.filter(g => {
+    if (showAdultContent) return true;
+    return g.severity !== 'EXTREME' && !g.isNsfw;
+  });
+
   return (
     <div className="space-y-12">
+      {/* Age Verification Warning Modal */}
+      {showVerificationModal && (
+        <AgeVerificationModal
+          onConfirm={() => {
+            localStorage.setItem('isAdultConfirmed', 'true');
+            setShowAdultContent(true);
+            setShowVerificationModal(false);
+            fetchRandomGaali();
+          }}
+          onReject={() => {
+            setShowVerificationModal(false);
+          }}
+        />
+      )}
+
       {/* 1. Hero Search Section */}
       <section className="text-center max-w-3xl mx-auto py-8 space-y-6">
         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-white leading-tight">
@@ -167,24 +218,58 @@ export default function HomePage() {
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between border-b border-[#334155] pb-3">
             <h3 className="text-2xl font-extrabold text-white">
-              {hasActiveSearch ? `Search Results (${searchResults.length})` : '🔥 Popular Trending Slangs'}
+              {hasActiveSearch ? `Search Results (${filteredDisplayList.length})` : '🔥 Popular Trending Slangs'}
             </h3>
-            {loadingSearch && <span className="text-xs text-slate-400 animate-pulse">Searching catalog...</span>}
+            <div className="flex items-center gap-3">
+              {loadingSearch && <span className="text-xs text-slate-400 animate-pulse">Searching catalog...</span>}
+              <button
+                onClick={() => {
+                  if (showAdultContent) {
+                    setShowAdultContent(false);
+                    localStorage.removeItem('isAdultConfirmed');
+                  } else {
+                    setShowVerificationModal(true);
+                  }
+                }}
+                className={`text-xs px-3 py-1.5 rounded-lg border font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  showAdultContent 
+                    ? 'bg-rose-500/10 text-rose-450 border-rose-500/25 hover:bg-rose-500/20' 
+                    : 'bg-[#1e293b] text-slate-400 border-[#334155] hover:border-slate-500 hover:text-white'
+                }`}
+              >
+                🔞 {showAdultContent ? '18+ Enabled' : 'Enable 18+'}
+              </button>
+            </div>
           </div>
 
-          {displayList.length === 0 ? (
-            <div className="text-center py-12 bg-[#1e293b]/30 border border-dashed border-[#334155] rounded-2xl">
+          {filteredDisplayList.length === 0 ? (
+            <div className="text-center py-12 bg-[#1e293b]/30 border border-dashed border-[#334155] rounded-2xl space-y-3">
               <p className="text-slate-400 text-lg font-medium">No slangs found matching your query.</p>
-              <button 
-                onClick={() => { setSearchQuery(''); setSelectedRegion('All'); }}
-                className="mt-3 text-sm font-semibold text-[#ff4d4d] hover:underline"
-              >
-                Clear all filters
-              </button>
+              {!showAdultContent && hasHiddenExtreme && (
+                <p className="text-xs text-slate-400">
+                  Some results were hidden because adult content filtering is active.
+                </p>
+              )}
+              <div className="flex justify-center gap-4">
+                <button 
+                  onClick={() => { setSearchQuery(''); setSelectedRegion('All'); }}
+                  className="text-sm font-semibold text-[#ff4d4d] hover:underline cursor-pointer"
+                >
+                  Clear all filters
+                </button>
+                {!showAdultContent && hasHiddenExtreme && (
+                  <button 
+                    onClick={() => setShowVerificationModal(true)}
+                    className="text-sm font-semibold text-rose-400 hover:underline cursor-pointer"
+                  >
+                    Verify Age (18+)
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {displayList.map((g) => (
+              {filteredDisplayList.map((g) => (
                 <Link key={g.id} href={`/slang/${g.slug}`} className="group block p-6 rounded-2xl bg-[#1e293b] border border-[#334155] hover:border-slate-400 transition-all hover-scale">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-semibold px-2 py-0.5 bg-slate-700/50 text-slate-300 rounded-md">

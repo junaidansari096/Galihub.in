@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect, use } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { ArrowLeft, MapPin, Eye, ThumbsUp, ThumbsDown, MessageSquare, Check, Send, AlertTriangle, ShieldCheck } from 'lucide-react';
+import AgeVerificationModal from '@/components/AgeVerificationModal';
 
 interface Tag {
   id: string;
@@ -53,11 +55,19 @@ export default function SlangDetailPage({ params }: { params: Promise<{ slug: st
   const resolvedParams = use(params);
   const slug = resolvedParams.slug;
   const { user } = useAuth();
+  const router = useRouter();
   
+  const [isAdultConfirmed, setIsAdultConfirmed] = useState(false);
   const [word, setWord] = useState<string>('');
   const [definitions, setDefinitions] = useState<Gaali[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsAdultConfirmed(localStorage.getItem('isAdultConfirmed') === 'true');
+    }
+  }, []);
 
   // Per-definition interactive states mapped by entry ID
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
@@ -197,8 +207,22 @@ export default function SlangDetailPage({ params }: { params: Promise<{ slug: st
     );
   }
 
+  const hasExtreme = definitions.some(d => d.severity === 'EXTREME' || d.isNsfw);
+  const showVerificationModal = hasExtreme && !isAdultConfirmed;
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
+      {showVerificationModal && (
+        <AgeVerificationModal
+          onConfirm={() => {
+            localStorage.setItem('isAdultConfirmed', 'true');
+            setIsAdultConfirmed(true);
+          }}
+          onReject={() => {
+            router.push('/');
+          }}
+        />
+      )}
       {/* Back button */}
       <div>
         <Link href="/" className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-400 hover:text-white transition-colors">
