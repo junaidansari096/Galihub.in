@@ -252,7 +252,18 @@ export const searchGaalis = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    const formattedGaalis = slangEntries.map(g => ({
+    // Filter to keep only the first (most popular) entry for each unique word name (case-insensitive)
+    const seenWords = new Set<string>();
+    const uniqueSlangEntries = [];
+    for (const entry of slangEntries) {
+      const normalizedWord = entry.word.toLowerCase().trim();
+      if (!seenWords.has(normalizedWord)) {
+        seenWords.add(normalizedWord);
+        uniqueSlangEntries.push(entry);
+      }
+    }
+
+    const formattedGaalis = uniqueSlangEntries.map(g => ({
       ...g,
       likes: g.likesCount,
       dislikes: g.dislikesCount,
