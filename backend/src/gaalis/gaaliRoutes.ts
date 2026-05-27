@@ -9,11 +9,11 @@ import {
   getRandomGaali,
   importCsvGaalis
 } from './gaaliController';
-import { authenticateToken, authenticateTokenLoose } from '../middleware/authMiddleware';
+import { authenticateToken, authenticateTokenLoose, uploadRateLimiter } from '../middleware/authMiddleware';
 
 const router = Router();
 
-router.post('/upload', authenticateToken as any, uploadGaali as any);
+router.post('/upload', authenticateToken as any, uploadRateLimiter as any, uploadGaali as any);
 router.post('/import-csv', authenticateToken as any, importCsvGaalis as any);
 router.get('/', authenticateTokenLoose as any, searchGaalis as any);
 router.get('/random', authenticateTokenLoose as any, getRandomGaali as any);

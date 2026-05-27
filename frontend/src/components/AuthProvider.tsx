@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 interface User {
   id: string;
@@ -44,8 +45,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(res.user);
           localStorage.setItem('user', JSON.stringify(res.user));
         } catch (err) {
-          console.error('Failed to sync profile', err);
-          // Token might be expired
+          // Token is expired or invalid; log out silently without triggering developer error overlays
+          console.warn('Session expired or invalid. Clearing credentials.');
           logout();
         }
       }
@@ -63,6 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    supabase.auth.signOut().catch((err) => console.error('Supabase signout error', err));
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setToken(null);

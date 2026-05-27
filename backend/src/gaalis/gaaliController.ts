@@ -197,23 +197,77 @@ export const uploadGaali = async (req: AuthRequest, res: Response) => {
   }
 };
 
+const ALIAS_MAP: Record<string, string[]> = {
+  'mc': ['madarchod', 'maderchod', 'madrchod', 'maaderchod'],
+  'bc': ['behenchod', 'bhenchod', 'behanchod'],
+  'bsdk': ['bhosadike', 'bhosdike', 'bhosadi ke'],
+  'loda': ['lauda', 'lowda', 'loda'],
+  'lauda': ['loda', 'lowda', 'lauda'],
+  'lowda': ['loda', 'lauda', 'lowda'],
+  'gand': ['gaand', 'gandu', 'gand'],
+  'gaand': ['gand', 'gandu', 'gaand'],
+  'chutiya': ['chutya', 'chootiya', 'chutiya'],
+  'chutya': ['chutiya', 'chootiya', 'chutya'],
+  'chootiya': ['chutiya', 'chutya', 'chootiya'],
+  'harami': ['herami', 'haraami', 'harami'],
+  'kutta': ['kuta', 'kutta'],
+  'kuta': ['kutta', 'kuta']
+};
+
+const getPhoneticSignature = (text: string): string => {
+  let s = text.toLowerCase().trim();
+  s = s.replace(/[^a-z]/g, '');
+  if (!s) return '';
+  s = s.replace(/(.)\1+/g, '$1');
+  s = s.replace(/ph/g, 'f');
+  s = s.replace(/sh/g, 's');
+  s = s.replace(/ch/g, 'c');
+  s = s.replace(/jh/g, 'j');
+  s = s.replace(/bh/g, 'b');
+  s = s.replace(/dh/g, 'd');
+  s = s.replace(/gh/g, 'g');
+  s = s.replace(/kh/g, 'k');
+  s = s.replace(/y/g, 'i');
+  s = s.replace(/v/g, 'w');
+  s = s.replace(/([^c])h/g, '$1');
+  if (s.length === 0) return '';
+  const first = s[0];
+  const rest = s.slice(1).replace(/[aeiou]/g, '');
+  return first + rest;
+};
+
+const computeRelevance = (word: string, meaning: string, emotionalMeaning: string, query: string): number => {
+  const q = query.toLowerCase().trim();
+  const w = word.toLowerCase().trim();
+  const m = meaning.toLowerCase().trim();
+  const em = emotionalMeaning.toLowerCase().trim();
+
+  if (w === q) return 100;
+
+  const aliasesForQ = ALIAS_MAP[q];
+  if (aliasesForQ && aliasesForQ.includes(w)) return 90;
+
+  const aliasesForW = ALIAS_MAP[w];
+  if (aliasesForW && aliasesForW.includes(q)) return 90;
+
+  const qSig = getPhoneticSignature(q);
+  const wSig = getPhoneticSignature(w);
+  if (qSig && wSig && qSig === wSig) return 80;
+
+  if (w.startsWith(q)) return 75;
+  if (w.includes(q)) return 70;
+  if (m.includes(q) || em.includes(q)) return 50;
+
+  return 0;
+};
+
 export const searchGaalis = async (req: AuthRequest, res: Response) => {
   try {
     const { q, region, tag, language } = req.query;
 
     const whereClause: any = {
-      moderationStatus: PostStatus.APPROVED // Only search approved words
+      moderationStatus: PostStatus.APPROVED
     };
-
-    // If query parameter is set
-    if (q) {
-      const searchStr = String(q).trim();
-      whereClause.OR = [
-        { word: { contains: searchStr, mode: 'insensitive' } },
-        { meaning: { contains: searchStr, mode: 'insensitive' } },
-        { emotionalMeaning: { contains: searchStr, mode: 'insensitive' } }
-      ];
-    }
 
     if (region) {
       whereClause.originRegion = { equals: String(region), mode: 'insensitive' };
@@ -246,16 +300,45 @@ export const searchGaalis = async (req: AuthRequest, res: Response) => {
             role: true
           }
         }
-      },
-      orderBy: {
-        views: 'desc' // Most popular first
       }
     });
 
-    // Filter to keep only the first (most popular) entry for each unique word name (case-insensitive)
+    let matchedEntries = [];
+
+    if (q) {
+      const searchStr = String(q).trim();
+      
+      // Calculate relevance for each entry
+      const entriesWithScore = slangEntries.map(entry => {
+        const score = computeRelevance(
+          entry.word,
+          entry.meaning,
+          entry.emotionalMeaning,
+          searchStr
+        );
+        return { entry, score };
+      });
+
+      // Filter entries with non-zero score and sort by score desc, then views desc
+      const filtered = entriesWithScore.filter(item => item.score > 0);
+      filtered.sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return b.entry.views - a.entry.views;
+      });
+
+      matchedEntries = filtered.map(item => item.entry);
+    } else {
+      // Default sorting: most popular first
+      slangEntries.sort((a, b) => b.views - a.views);
+      matchedEntries = slangEntries;
+    }
+
+    // Deduplicate entries by unique word name (keeping the highest ranked one)
     const seenWords = new Set<string>();
     const uniqueSlangEntries = [];
-    for (const entry of slangEntries) {
+    for (const entry of matchedEntries) {
       const normalizedWord = entry.word.toLowerCase().trim();
       if (!seenWords.has(normalizedWord)) {
         seenWords.add(normalizedWord);

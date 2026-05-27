@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { LogIn, KeyRound, Mail, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
@@ -21,8 +22,24 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await api.login({ email, password });
-      login(res.token, res.user);
+      // 1. Authenticate with Supabase Auth
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) throw authError;
+      if (!data.session) throw new Error('Authentication failed. No session returned.');
+
+      // 2. Set token in localStorage temporarily so getProfile uses it
+      localStorage.setItem('token', data.session.access_token);
+
+      // 3. Fetch database profile synchronized by the db trigger
+      const profileRes = await api.getProfile();
+
+      // 4. Log in within AuthProvider context
+      login(data.session.access_token, profileRes.user);
+      
       router.push('/');
       router.refresh();
     } catch (err: any) {

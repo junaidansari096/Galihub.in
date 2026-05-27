@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { UserPlus, Mail, KeyRound, User, MapPin, AlertCircle, ArrowRight } from 'lucide-react';
 
 const REGIONS = [
@@ -29,8 +30,45 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const res = await api.signup({ username, email, password, region });
-      login(res.token, res.user);
+      // 1. Check username/email availability on backend first
+      await api.checkAvailability({
+        username: username.trim().toLowerCase(),
+        email: email.trim().toLowerCase()
+      });
+
+      // 2. Sign up user in Supabase Auth, passing metadata
+      const { data, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username: username.trim().toLowerCase(),
+            region: region || 'Unknown',
+          },
+        },
+      });
+
+      if (authError) throw authError;
+      if (!data.user) throw new Error('Registration failed. No user object returned.');
+
+      // If email verification is enabled, session won't be returned immediately
+      if (!data.session) {
+        setError('Registration successful! Please check your email to verify your account.');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Set token in localStorage temporarily
+      localStorage.setItem('token', data.session.access_token);
+
+      // 3. Wait briefly for database trigger synchronization to complete
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      
+      const profileRes = await api.getProfile();
+
+      // 4. Log in within AuthProvider context
+      login(data.session.access_token, profileRes.user);
+      
       router.push('/');
       router.refresh();
     } catch (err: any) {

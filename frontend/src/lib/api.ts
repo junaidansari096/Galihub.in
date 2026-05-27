@@ -41,6 +41,7 @@ export const api = {
   signup: (body: any) => fetchAPI('/auth/signup', { method: 'POST', body: JSON.stringify(body) }),
   login: (body: any) => fetchAPI('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   getProfile: () => fetchAPI('/auth/profile'),
+  checkAvailability: (body: { username?: string; email?: string }) => fetchAPI('/auth/check-availability', { method: 'POST', body: JSON.stringify(body) }),
 
   // Gaalis / Slangs
   search: (params: { q?: string; region?: string; tag?: string; language?: string } = {}) => {

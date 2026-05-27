@@ -220,3 +220,34 @@ export const getProfile = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: error.message || 'Error fetching profile' });
   }
 };
+
+export const checkAvailability = async (req: any, res: Response) => {
+  try {
+    const { username, email } = req.body;
+    const cleanUsername = username?.trim().toLowerCase();
+    const cleanEmail = email?.trim().toLowerCase();
+
+    if (cleanUsername) {
+      const existing = await prisma.user.findFirst({
+        where: { username: { equals: cleanUsername, mode: 'insensitive' } }
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'Username is already taken' });
+      }
+    }
+
+    if (cleanEmail) {
+      const existing = await prisma.user.findFirst({
+        where: { email: { equals: cleanEmail, mode: 'insensitive' } }
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'Email is already registered' });
+      }
+    }
+
+    return res.status(200).json({ available: true });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || 'Error checking availability' });
+  }
+};
+

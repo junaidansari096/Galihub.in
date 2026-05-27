@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jsonwebtoken from 'jsonwebtoken';
 import { prisma } from '../utils/db';
 import { RoleName, mapRoleToLegacy } from '../utils/constants';
+import { supabase } from '../utils/supabase';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -26,17 +27,17 @@ export const authenticateToken = async (
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'fallback_secret';
-    const decoded = jsonwebtoken.verify(token, secret) as {
-      id: string;
-      username: string;
-      email: string;
-      role: string;
-    };
+    const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (authError || !supabaseUser) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+
+    const userId = supabaseUser.id;
 
     // Fetch fresh user data from DB to check bans/suspensions and role name
     const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
+      where: { id: userId },
       include: { role: true }
     });
 
@@ -95,30 +96,65 @@ export const authenticateTokenLoose = async (
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'fallback_secret';
-    const decoded = jsonwebtoken.verify(token, secret) as {
-      id: string;
-      username: string;
-      email: string;
-      role: string;
-    };
+    const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (!authError && supabaseUser) {
+      const userId = supabaseUser.id;
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { role: true }
+      });
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
-      include: { role: true }
-    });
-
-    if (user && !user.isBanned) {
-      req.user = {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: mapRoleToLegacy(user.role.name),
-        isShadowBanned: user.isShadowBanned,
-      };
+      if (user && !user.isBanned) {
+        req.user = {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: mapRoleToLegacy(user.role.name),
+          isShadowBanned: user.isShadowBanned,
+        };
+      }
     }
   } catch (error) {
     // Ignore verification errors, proceed as anonymous
   }
   next();
 };
+
+export const uploadRateLimiter = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // Exempt admins, superadmins, and moderators
+  if (req.user.role !== RoleName.USER) {
+    return next();
+  }
+
+  try {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const count = await prisma.slangEntry.count({
+      where: {
+        uploaderId: req.user.id,
+        createdAt: {
+          gte: oneHourAgo,
+        },
+      },
+    });
+
+    if (count >= 5) {
+      return res.status(429).json({
+        error: 'Upload rate limit exceeded. You can only upload up to 5 slang entries per hour.',
+      });
+    }
+
+    next();
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Error checking upload rate limit.' });
+  }
+};
+
